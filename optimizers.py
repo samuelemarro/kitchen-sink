@@ -4,23 +4,7 @@ import torch.optim as optim
 import torch.optim.functional as F
 import math
 
-# Returns b if filter_ is True, else a
-def fast_boolean_mask(tensor, filter_, reshape=True):
-    assert len(tensor) == len(filter_)
-
-    if reshape:
-        assert len(filter_.shape) == 1
-
-        pre_expansion_shape = [len(filter_)] + ([1] * (len(tensor.shape) - 1))
-        filter_ = filter_.reshape(*pre_expansion_shape)
-
-        post_expansion_shape = [len(filter_)] + list(tensor.shape[1:])
-        filter_ = filter_.expand(*post_expansion_shape)
-
-    assert tensor.shape == filter_.shape
-    filter_ = filter_.float()
-
-    return filter_ * tensor
+import numpy as np
 
 def _adam(params,
          grads,
@@ -31,16 +15,16 @@ def _adam(params,
          amsgrad: bool,
          beta1: float,
          beta2: float,
-         lr: float,
          weight_decay: float,
          eps: float,
-         masks):
+         lr_tensors,
+         mask_set):
     r"""Functional API that performs Adam algorithm computation.
 
     See :class:`~torch.optim.Adam` for details.
     """
 
-    for i, (param, mask) in enumerate(zip(params, masks)):
+    for i, (param, lr_tensor, mask) in enumerate(zip(params, lr_tensors, mask_set)):
 
         grad = grads[i]
         exp_avg = exp_avgs[i]
@@ -55,8 +39,6 @@ def _adam(params,
         if weight_decay != 0:
             grad = grad.add(param, alpha=weight_decay)
 
-        grad.mul_(mask.float())
-
         # Decay the first and second moment running average coefficient
         exp_avg.mul_(beta1).add_(grad, alpha=1 - beta1)
         exp_avg_sq.mul_(beta2).addcmul_(grad, grad, value=1 - beta2)
@@ -68,18 +50,21 @@ def _adam(params,
         else:
             denom = (exp_avg_sq.sqrt() / math.sqrt(bias_correction2)).add_(eps)
 
-        step_size = lr / bias_correction1
+        step_size = lr_tensor / bias_correction1 * mask.float()
 
-        param.addcdiv_(exp_avg, denom, value=-step_size)
+        # value deve essere uno scalare, a noi non va bene
+        # param.addcdiv_(exp_avg, denom, value=-step_size)
+        param.add_(-step_size * exp_avg / denom)
 
-class AdamMasked(optim.Adam):
-    def __init__(self, params, masks, lr=1e-3, betas=(0.9, 0.999), eps=1e-8,
+class AdamLRMasked(optim.Adam):
+    def __init__(self, params, lr_tensors, masks, betas=(0.9, 0.999), eps=1e-8,
                  weight_decay=0, amsgrad=False):
-        super().__init__(params, lr=lr, betas=betas, eps=eps, weight_decay=weight_decay, amsgrad=amsgrad)
+        super().__init__(params, lr=np.inf, betas=betas, eps=eps, weight_decay=weight_decay, amsgrad=amsgrad)
+        self.lr_tensors = lr_tensors
         self.masks = masks
 
     @torch.no_grad()
-    def step(self, closure = None):
+    def step(self, active_masks, closure = None):
         loss = None
         if closure is not None:
             with torch.enable_grad():
@@ -94,7 +79,9 @@ class AdamMasked(optim.Adam):
             max_exp_avg_sqs = []
             state_steps = []
 
-            for p in group['params']:
+            mask_set = []
+
+            for p, mask_variants in zip(group['params'], self.masks):
                 if p.grad is not None:
                     params_with_grad.append(p)
                     if p.grad.is_sparse:
@@ -124,6 +111,13 @@ class AdamMasked(optim.Adam):
                     # record the step after step update
                     state_steps.append(state['step'])
 
+                cumulative_mask = torch.zeros_like(p, dtype=torch.bool)
+                for mask_variant, active in zip(mask_variants, active_masks):
+                    if active:
+                        cumulative_mask |= mask_variant
+
+                mask_set.append(cumulative_mask)
+
             beta1, beta2 = group['betas']
 
             _adam(params_with_grad,
@@ -135,9 +129,9 @@ class AdamMasked(optim.Adam):
                    group['amsgrad'],
                    beta1,
                    beta2,
-                   group['lr'],
                    group['weight_decay'],
                    group['eps'],
-                   self.masks
+                   self.lr_tensors,
+                   mask_set
                    )
         return loss
