@@ -1,0 +1,17 @@
+start cmd.exe cmd /k "python train_standard_2.py 1.0 1"
+start cmd.exe cmd /k "python train_standard_2.py 1.0 2"
+start cmd.exe cmd /k "python train_standard_2.py 1.0 3"
+start cmd.exe cmd /k "python train_standard_2.py 1.0 4"
+start cmd.exe cmd /k "python train_standard_2.py 1.0 5"
+
+start cmd.exe cmd /k "python train_standard_2.py 1.1 1"
+start cmd.exe cmd /k "python train_standard_2.py 1.1 2"
+start cmd.exe cmd /k "python train_standard_2.py 1.1 3"
+start cmd.exe cmd /k "python train_standard_2.py 1.1 4"
+start cmd.exe cmd /k "python train_standard_2.py 1.1 5"
+
+start cmd.exe cmd /k "python train_standard_2.py 1.25 1"
+start cmd.exe cmd /k "python train_standard_2.py 1.25 2"
+start cmd.exe cmd /k "python train_standard_2.py 1.25 3"
+start cmd.exe cmd /k "python train_standard_2.py 1.25 4"
+start cmd.exe cmd /k "python train_standard_2.py 1.25 5"

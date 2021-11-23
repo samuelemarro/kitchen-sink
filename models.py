@@ -1,16 +1,16 @@
 import torch
 import torch.nn as nn
 
-def mini_model():
+def mini_model(coeff=1):
     return nn.Sequential(
-            nn.Conv2d(3, 8, 3),
+            nn.Conv2d(3, int(8 * coeff), 3),
             nn.ReLU(),
-            nn.Conv2d(8, 16, 3),
+            nn.Conv2d(int(8 * coeff), int(16 * coeff), 3),
             nn.ReLU(),
-            nn.Conv2d(16, 32, 3),
+            nn.Conv2d(int(16 * coeff), int(32 * coeff), 3),
             nn.ReLU(),
             nn.Flatten(),
-            nn.Linear(26 * 26 * 32, 1000),
-            nn.Linear(1000, 500),
+            nn.Linear(26 * 26 * int(32 * coeff), int(1000 * coeff)),
+            nn.Linear(int(1000 * coeff), int(500 * coeff)),
             nn.ReLU(),
-            nn.Linear(500, 10))
+            nn.Linear(int(500 * coeff), 10))

@@ -18,13 +18,17 @@ def _adam(params,
          weight_decay: float,
          eps: float,
          lr_tensors,
-         mask_set):
+         mask_set,
+         multipliers = None):
     r"""Functional API that performs Adam algorithm computation.
 
     See :class:`~torch.optim.Adam` for details.
     """
 
-    for i, (param, lr_tensor, mask) in enumerate(zip(params, lr_tensors, mask_set)):
+    if multipliers is None:
+        multipliers = [None] * len(params)
+
+    for i, (param, lr_tensor, mask, multiplier) in enumerate(zip(params, lr_tensors, mask_set, multipliers)):
 
         grad = grads[i]
         exp_avg = exp_avgs[i]
@@ -51,6 +55,8 @@ def _adam(params,
             denom = (exp_avg_sq.sqrt() / math.sqrt(bias_correction2)).add_(eps)
 
         step_size = lr_tensor / bias_correction1 * mask.float()
+        if multiplier is not None:
+            step_size.mul_(multiplier)
 
         # value deve essere uno scalare, a noi non va bene
         # param.addcdiv_(exp_avg, denom, value=-step_size)
@@ -64,7 +70,7 @@ class AdamLRMasked(optim.Adam):
         self.masks = masks
 
     @torch.no_grad()
-    def step(self, active_masks, closure = None):
+    def step(self, active_masks, multipliers = None, closure = None):
         loss = None
         if closure is not None:
             with torch.enable_grad():
@@ -132,6 +138,7 @@ class AdamLRMasked(optim.Adam):
                    group['weight_decay'],
                    group['eps'],
                    self.lr_tensors,
-                   mask_set
+                   mask_set,
+                   multipliers
                    )
         return loss

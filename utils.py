@@ -1,4 +1,5 @@
 import gzip
+import json
 import pathlib
 import pickle
 
@@ -40,3 +41,50 @@ def load_zip(path):
     obj = pickle.loads(buffer)
     file.close()
     return obj
+
+class AttackConfig:
+    def __init__(self, config_dict):
+        self.config_dict = config_dict
+
+    def get_arguments(self, attack_name, domain, p, attack_type):
+        kwargs = {}
+
+        def load_kwargs(new_kwargs):
+            for key, value in new_kwargs.items():
+                kwargs[key] = value
+
+        def loop_across_dict(current_dict, selectors):
+            if 'params' in current_dict:
+                load_kwargs(current_dict['params'])
+
+            if len(selectors) == 0:
+                return
+
+            general_selector, specific_selector = selectors[0]
+
+            if general_selector in current_dict and specific_selector in current_dict:
+                raise RuntimeError('Both selectors available: cannot choose.')
+
+            if specific_selector in current_dict:
+                loop_across_dict(current_dict[specific_selector], selectors[1:])
+            elif general_selector in current_dict:
+                assert len(current_dict.keys()) <= 2
+                loop_across_dict(current_dict[general_selector], selectors[1:])
+
+        # The specific value overrides the general one, from outermost to innermost
+        loop_across_dict(self.config_dict,
+                         [
+                             ('all_attacks', attack_name),
+                             ('all_domains', domain),
+                             ('all_distances', p),
+                             ('all_types', attack_type)
+                         ]
+                         )
+
+        return kwargs
+
+def read_attack_config_file(path):
+    with open(path, 'r') as f:
+        config_dict = json.load(f)
+
+    return AttackConfig(config_dict)

@@ -2,8 +2,6 @@ import torch
 from torch._C import device
 import torch.nn as nn
 import torch.optim
-from torch.optim import optimizer
-import optimizers as optim
 import torchvision
 
 import itertools
@@ -16,6 +14,8 @@ import utils
 import numpy as np
 
 import pathlib
+
+import optimizers
 
 # Batch size: aggiorni i pesi solo dopo un tot
 # Coefficienti?
@@ -104,6 +104,29 @@ def ks_train(model, dataloader, parameter_sets, optimizers, loss_function, devic
                 if i < parameter_set['epochs']:
                     optimizer.step()
 
+def basic_ks_train(model, dataloader, epoch_set, optimizer, loss_function, device):
+    model.train()
+    model.to(device)
+
+    max_epochs = max(epoch_set)
+
+    iterator = tqdm(range(max_epochs), desc='Training')
+
+    for i in iterator:
+        for images, labels in dataloader:
+            images = images.to(device)
+            labels = labels.to(device)
+
+            y_pred = model(images)
+            loss = loss_function(y_pred, labels)
+
+            optimizer.zero_grad()
+            loss.backward()
+
+            active_masks = [i < epoch for epoch in epoch_set]
+
+            optimizer.step(active_masks)
+
 
 def create_basic_set(**parameters):
     parameter_pairs = []
@@ -129,7 +152,7 @@ def get_optimizer(model_parameters, parameter_set, mask=None):
             return optim.AdamMasked(model_parameters, mask, lr=parameter_set['lr'])
     elif parameter_set['optimizer_type'] == 'sgd':
         if mask is None:
-            return torch.optim.SGD(model_parameters, lr=parameter_set['sgd'])
+            return torch.optim.SGD(model_parameters, lr=parameter_set['lr'])
         else:
             raise NotImplementedError
     else:
@@ -170,48 +193,79 @@ def get_kitchen_sink_optimizers(parameter_sets, model, device):
 
     return optimizers, mask_sets
 
+def get_basic_kitchen_sink_optimizer(model, lrs, epochs, device):
+    parameters = list(model.parameters())
+
+    lr_tensors = []
+    mask_set = []
+
+    for parameter in parameters:
+        lr_tensor = torch.zeros_like(parameter, device=device)
+
+        selections = torch.randint(0, len(lrs), lr_tensor.shape, device=device)
+
+        for i, lr in enumerate(lrs):
+            same_selection = torch.eq(selections, i)
+
+            lr_tensor += lr * same_selection.float()
+
+        assert not torch.eq(lr_tensor, 0).any()
+        lr_tensors.append(lr_tensor)
+
+        selections = torch.randint(0, len(epochs), parameter.shape, device=device)
+
+        mask_variants = [torch.eq(selections, i) for i in range(len(epochs))]
+        mask_set.append(mask_variants)
+    
+    return optimizers.AdamLRMasked(parameters, lr_tensors, mask_set), lr_tensors, mask_set
 
 def main():
     device = 'cuda'
-    batch_size = 32
+    batch_size = 128
     loss_function = nn.CrossEntropyLoss()
 
     dataset = data.parse_dataset('cifar10', 'std:train')
     dataloader = torch.utils.data.DataLoader(dataset, batch_size, shuffle=True)
 
     name = 'test'
-    base_folder = pathlib.Path('trained-models') / name
+    base_folder = pathlib.Path('trained-models') / name / 'run_6'
     base_folder.mkdir(parents=True, exist_ok=True)
-    kitchen_sink = True
+    kitchen_sink = False
 
     test_dataset = data.parse_dataset('cifar10', 'std:test')
     test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size, shuffle=False)
 
     # parameter_sets = create_basic_set(optimizer_type=['adam'], lr=[1e-3, 1e-4, 1e-5], epochs=[100, 200, 300])
 
-    parameter_sets = create_basic_set(optimizer_type=['adam'], lr=[1e-3, 1e-4, 1e-5], epochs=[100, 200, 300])
+    lrs = [1e-3, 1e-4, 1e-5]
+    epochs = [100, 200, 300]
+
+    parameter_sets = create_basic_set(optimizer_type=['adam'], lr=lrs, epochs=epochs)
 
     if kitchen_sink:
         model = models.mini_model()
-        optimizers, mask_sets = get_kitchen_sink_optimizers(parameter_sets, model, device)
-        assert len(parameter_sets) == len(optimizers)
-        ks_train(model, dataloader, parameter_sets, optimizers, loss_function, device)
+        optimizer, lr_tensors, mask_set = get_basic_kitchen_sink_optimizer(model, lrs, epochs, device)
+        basic_ks_train(model, dataloader, epochs, optimizer, loss_function, device)
 
         torch.save(model.state_dict(), base_folder / 'kitchen-sink.pth')
-        utils.save_zip(mask_sets, base_folder / 'mask_sets.zip')
         acc = accuracy(model, test_dataloader, device)
         print('KS Accuracy: ', acc * 100.0, '%')
+
+        utils.save_zip(lr_tensors, base_folder / 'lr_tensors.zip')
+        utils.save_zip(mask_set, base_folder / 'mask_set.zip')
     else:
         for i, parameter_set in enumerate(parameter_sets):
             instance_path = base_folder / f'{i}.pth'
-            model = models.mini_model()
-            optimizer = get_optimizer(model.parameters(), parameter_set)
-            basic_train(model, dataloader, parameter_set, optimizer, loss_function, device)
+            if not instance_path.exists():
+                model = models.mini_model()
 
-            torch.save(model.state_dict(), instance_path)
-            acc = accuracy(model, test_dataloader, device)
-            print(parameter_set)
-            print(f'{i} Accuracy: ', acc * 100.0, '%')
+                optimizer = get_optimizer(model.parameters(), parameter_set)
+                basic_train(model, dataloader, parameter_set, optimizer, loss_function, device)
+
+                torch.save(model.state_dict(), instance_path)
+                acc = accuracy(model, test_dataloader, device)
+                print(parameter_set)
+                print(f'{i} Accuracy: ', acc * 100.0, '%')
             
 
 if __name__ == '__main__':
